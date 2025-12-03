@@ -1,0 +1,270 @@
+---
+title: "Analisis de clusters jerarquicos y Kmedias"
+author: "Equipo 5"
+date: "3/10/2021"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+### integrantes:
+
+Tomás Rodriguez Montiel - A00824223
+Isaac Kelly Ramirez - A00829261
+Emilio marchard - A00828209
+Frida Montúfar Godínez - A01652971
+Daniel Quintanilla - A00825167
+
+# Analisis de clusters jerarquicos y Kmedias
+
+```{r, warning=FALSE, message=FALSE}
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(factoextra)
+
+```
+```{r}
+D1 <- read_excel("DATOSSP2.xlsx")
+Datos = D1
+D1 %>% head()
+D1 <- rename(D1,NSE="19. NSE")
+D1 <- rename(D1,c_anuales="4. COMPRAS AL AÑO.")
+```
+
+## Revisión de observaciones faltantes
+En esta parte del código, debemos comprobar que no existen valores nulos.
+
+```{r}
+colSums(is.na(D1[,c("NSE","c_anuales")]))
+```
+En este caso, no hay observaciones faltantes
+
+## Tabla de medias
+```{r}
+#Tabla con datos de las n=1000 observaciones
+Tabla1<-D1 %>%
+  summarize("n"=n(), 
+            "Promedio Compras anuales" = round(mean(c_anuales),1))
+
+#Tabla por cada Escuela
+Tabla2<-D1 %>%
+  group_by(NSE) %>% 
+  summarize("n"=n(), 
+            "Promedio de Compras anuales" = round(mean(c_anuales),1))
+
+#Tabla agregada
+Tabla <-bind_rows(Tabla2, Tabla1)
+Tabla
+```
+
+
+Visualmente se ve que ingeniería tiene un desempeño menor al promedio, negocios un desempeño similar y los alumnos de otras escuelas un desempeño superior. Sin embargo, estas diferencias visuales hay que probar con el Análisis de varianza si son estadísticamente significativas, pero primero hay que validar los supuestos.
+
+## Box plots
+
+```{r}
+G1 <- boxplot(c_anuales~NSE,D1)
+G1
+```
+En el gráfico no se puede observar bien los centros de las distribuciones, porque hay observaciones extremas, las cuales se revisarán más adelante.
+
+## Estimación del modelo
+
+La estimación del modelo la podemos realizar con la función "aov" o con la función de "lm".
+
+Hay que recordar que:
+
+Ho: $\mu_I$ = $\mu_N=$ $\mu_O=$ $\mu$          (el nivel de compras es igual independientemente del nivel scioeconómico)
+
+Ha: al menos una es diferente            (el nivel de compras es diferente depndiendo del nivel socioeconómico)
+
+```{r}
+#Cambiando a factor la variable NSE
+D1$NSE<-replace(D1$NSE,D1$NSE=="A/B",1)
+D1$NSE<-replace(D1$NSE,D1$NSE=="C",2)
+D1$NSE<-replace(D1$NSE,D1$NSE=="C-",3)
+D1$NSE<-replace(D1$NSE,D1$NSE=="C+",4)
+
+D1$Escuela<-as.factor(D1$NSE)
+
+#Estimación ANOVA
+Estimacion1 <- aov(c_anuales ~ NSE, D1)
+summary(Estimacion1)
+
+```
+
+El nivel de significancia a utilizar será de alfa = 0.05. Debido a que alfa es mayor que el valor P de 4.7e-06 ***, se concluye que se rechaza Ho a favor de Ha, lo cual signifcc que al menos una media es diferente de cero.
+
+Sin embargo, se validará si tenemos observaciones extremas e influyentes y si se cumplan los supuestos del modelo.
+
+## Validación de problemas en la estimación y supuestos
+
+### Observaciones extremas influyentes
+
+Lo que se busca encontrar en esta parte del código es valores que estén muy por debajo o arriba de la mayoría de las observaciones y existen algunas que si se quitan modifican drasticamente los resultados. Las primeras son tolerables, pero las hay que eliminarlas. 
+
+La manera de identificar las observaciones extremas es mediante el residual estudentizado y las influyentes mediante la distancia cook.
+
+#### Residual estudentizado
+
+Si el reusltado del residual es superior a 2, la observación es extrema.
+
+```{r}
+#Calcular por observación el residual studentizado
+D1$RS<-rstudent(Estimacion1)
+#Identificar cuáles son las observaciones extremas
+Obs_extremas<-which(abs(D1$RS) >= 2)
+Obs_extremas
+```
+La lista de observaciones anteriores son consideradas extremas respecto a la variable dependiente, pero son aceptables.
+
+#### Observaciones influyentes
+Una observación es influyente si su distancia cook es mayor o igual a:
+
+DCi>= F_{$\alpha$=0.5,v1=(k+1),v2=n-(k+1)}
+
+Donde:
+k= total de variables explicativas categóricas en este caso solo hay una, nivel de compras.
+n= total de observaciones
+En la práctica se maneja un valor superior a 1.
+
+```{r}
+#Crear por observación la distancia cook
+D1$DC<-cooks.distance(Estimacion1)
+#Valor F de tablas
+Fc<-qf(0.5, (1+1), (nrow(D1)-(1+1)))
+#Código para identificar las observaciones extremas influyentes 
+Obs_influyentes<-which(D1$DC > Fc)
+Obs_influyentes
+```
+Mediante la distancia cook se concluye que no hay observaciones extremas influyentes.
+
+Si bien las observaciones extremas se toleran y las influyentes no, en este análisis se optará por quitar las extremas para tener mejores conclusiones
+
+```{r}
+D2<-D1[-Obs_extremas,c("NSE","c_anuales")]
+```
+
+Las estimaciones sin observaciones extremas son:
+
+```{r}
+#Estimación ANOVA
+Estimacion2 <- aov(c_anuales ~ NSE, D2)
+summary(Estimacion2)
+```
+Se mantienen las conclusiones, las medias son estadísticamente diferentes. 
+
+## Tabla de medias
+```{r}
+
+Tabla1<-D2 %>%
+  summarize("n"=n(), 
+            "Promedio Compras anuales" = round(mean(c_anuales),1))
+
+#Tabla por cada Nivel socioeconómico
+Tabla2<-D2 %>%
+  group_by(NSE) %>% 
+  summarize("n"=n(), 
+            "Promedio de Compras anuales" = round(mean(c_anuales),1))
+
+#Tabla agregada
+Tabla <-bind_rows(Tabla2, Tabla1)
+Tabla
+
+
+```
+
+Al quitar las observaciones extremas las medias se hacen más parecidas, pero aún estadísticamente son consideradas diferentes.
+
+### Validación de supuestos
+#### Muestras independientes
+
+
+#### Supuesto de normalidad
+El supuesto de normalidad lo validaremos con la prueba de Jarque Bera en los residuales del ANOVA.
+
+H0: normalidad (asimetría = 0 y curtosis = 3)
+Ha: no normalidad
+
+```{r}
+library(tseries)
+jarque.bera.test(resid(Estimacion2))
+```
+Debido que alfa=0.05 es mayor que el valor P de < 2.2e-16, se rechaza Ho a favor de Ha, no hay normalidad.
+
+
+
+
+Para continuar el ejercicio se hará referencia al Teorema del Límite Central.
+
+#### Supuesto de varianza constante
+
+Prueba de hipótesis para identificar la varianza constante (Breusch–Pagan test)
+H0: Varianza constante
+Ha: Varianza no constante
+
+```{r}
+library(lmtest)
+bptest(Estimacion2)
+```
+Como alfa de 0.05 es mayor al valor P de 0.006546 se concluye que no se cumple el supuesto de varianza constante.
+
+## Comparación de medias
+
+Para conocer cuál media es diferente (mayor o menor) se utilizará el procedimiento de Tukey.
+
+```{r}
+Tukey<-TukeyHSD(Estimacion2)
+Tukey
+```
+
+
+
+
+```{r}
+plot(Tukey)
+```
+
+Como todos los intervalos menos (4-3) incluyen el 0, se concluye que no hay diferencia.
+
+Pero, cómo en el intervalo de (4-3),  no incluye el cero se concluye que la diferencia de medias es diferente de cero, son diferentes.
+
+
+## Procedimiento de prueba no paramétrico para comparar más de dos medias
+Cuándo no se cumplen los supuestos de normalidad y de varianza constante, se pueden usar la prueba no paramétrica de Kruskal-Wallis para comparar medias e identificar si hay diferencias.
+
+Ho: $\mu_I$ = $\mu_N=$ $\mu_O=$ $\mu$          (el desempeño en profesional es igual)
+
+Ha: al menos una es diferente            (el desempeño en profesional es diferente)
+
+
+
+```{r}
+KT<-kruskal.test(c_anuales~NSE,D2)
+KT
+```
+Como alfa=0.05 es mayor al valor P de 3.114e-14 se rechaza Ho a favor de Ha, las medias son diferentes, el desempeño promedio de los alumnos difieren según el nivel socioeconómico
+
+
+
+
+Para concluir qué pares de medias son diferentes se utilizará la prueba de "Conover" ajustando el error, el valor P, con el método de holm. 
+      
+```{r}
+library(PMCMR)
+posthoc.kruskal.conover.test(c_anuales~NSE,D2, p.adjust.method ="holm")
+```       
+
+Los valores que se reportan son los valores P de la comparación de pares de medias. El único valor donde alfa = 0.05 es mayor al valor P es en la comparación 1 y 3 (Ingeniería vs resto de escuelas), solo en ese para el desmepeño promedio es diferente.
+
+Los resultados del ANOVA y de kruskal wallis salen similares.
+
